@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#09/26/26
+#10/02/26
 
 # Purpose:  This is a basic script to connect a native Linux application through the new ax25netd 
 #           Unix sockets to AGW software-TNC for AX.25 connections
@@ -11,7 +11,8 @@
 
 
 #Errata
-#09/26/26 - dranch - initial version of the start up script
+#10/02/26 - KI6ZHD - Added ax25netd socket directory prep; added start/stop syntax
+#09/26/26 - KI6ZHD - initial version of the start up script
 
 
 #---------------------------------------------------------------------------------------------
@@ -76,36 +77,60 @@ if [ -n "`lsmod | grep -e mkiss -e ax25 -e netrom -e rose`" ]; then
    CHKERR
 fi
 
-if [ "$UIDi" == "0" ]; then
+if [ "$UID" == "0" ]; then
    echo -e "\nERROR: do not run this script as root"
    echo -e   "       Run this script as a regular user that has all required permissions"
    CHKERR
 fi
 
-
-cd /etc/ax25
-CHKERR
-
-#Direwolf can also be started via systemd but we need to ensure it is actually running - tbd
-echo -e "Starting direwolf:  Logs in $LOG"
-direwolf -c /etc/ax25/direwolf.conf -da -t0 2>&1 >> $DIREWOLFRUNLOG &
-CHKERR
-
-#check this exists as it's required for ax25netd
-if [ ! -d /var/ax25/ ]; then
-   sudo mkdir -m 1777 /var/ax25
-   CHKERR
-   sudo mkdir -m 777 /var/ax25/mheard/
-   CHKERR
+if [ "$1" != "start" ] || [ "$1" != "stop" ]; then 
+   echo -e "\nERROR:  USAGE: You must specify 'start' or 'stop'
+   echo -e "Aborting\n"
+   exit 1
 fi
 
-echo -e "Starting ax25netd (translates libax25 calls to AGW connections)"
-echo -e "   - local AGW server loop/proxy port: 8100"
-echo -e "   - Mheard station gathering enabled"
-#echo -e "DEBUG: running in foreground : not as a daemon"
-#ax25netd -c /etc/ax25/agwpe.conf -f
-ax25netd -c /etc/ax25/agwpe.conf 2>&1 >> $AX25NETDLOG
-CHKERR
+if [ "$1" == "start "]; then
+   cd /etc/ax25
+   CHKERR
+
+   #Direwolf can also be started via systemd but we need to ensure it is actually running - tbd
+   echo -e "Starting direwolf:  Logs in $LOG"
+   direwolf -c /etc/ax25/direwolf.conf -da -t0 2>&1 >> $DIREWOLFRUNLOG &
+   CHKERR
+
+   #check this exists as it's required for ax25netd socket support
+   if [ ! -d /var/run/ax25/sockets/ ]; then
+      echo -e "\nCreating ax25netd socket directory"
+      sudo mkdir -p /var/run/ax25/sockets/
+      sudo chmod 755 /var/run/ax25
+      sudo chmod 777 /var/run/ax25/sockets/
+   fi
+
+   #check this exists as it's required for ax25netd
+   echo -e "\nPreping ax25netd mheard directory"
+   if [ ! -d /var/ax25/ ]; then
+      sudo mkdir -m 1777 /var/ax25
+      CHKERR
+      sudo mkdir -m 777 /var/ax25/mheard/
+      CHKERR
+   fi
+
+   echo -e "Starting ax25netd (translates libax25 calls to AGW connections)"
+   echo -e "   - local AGW server loop/proxy port: 8100"
+   echo -e "   - Mheard station gathering enabled"
+   #echo -e "DEBUG: running in foreground : not as a daemon"
+   #ax25netd -c /etc/ax25/agwpe.conf -f
+   ax25netd -c /etc/ax25/ax25netd_agwpe.conf 2>&1 >> $AX25NETDLOG
+   CHKERR
+  elif [ "$1" == "stop "]; then
+   #Future WAMPES stop
+
+   echo -e "\nStopping ax25netd"
+   killall ax25netd
+
+   echo -e "\nStopping Direwolf"
+   killall direwolf
+fi
 
 echo -e "\nScript complete\n"
 
