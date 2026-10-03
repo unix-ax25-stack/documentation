@@ -100,7 +100,7 @@ if [ ! -d /var/ax25/ ]; then
 fi
 
 echo -e "Starting ax25netd (translates libax25 calls to AGW connections)"
-echo -e "   - local AGW server loop/proxy port: 8100"
+echo -e "   - local AGW server loop/proxy port: 8200"
 echo -e "   - Mheard station gathering enabled"
 #echo -e "DEBUG: running in foreground : not as a daemon"
 #ax25netd -c /etc/ax25/agwpe.conf -f
