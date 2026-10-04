@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#10/02/26
+#10/04/26
 
 # Purpose:  This is a basic script to connect a native Linux application through the new ax25netd 
 #           Unix sockets to AGW software-TNC for AX.25 connections
@@ -11,6 +11,7 @@
 
 
 #Errata
+#10/04/25 - KI6ZHD - disable Direwolf APRS packet decoding by default
 #10/02/26 - KI6ZHD - Added ax25netd socket directory prep; added start/stop syntax
 #09/26/26 - KI6ZHD - initial version of the start up script
 
@@ -95,7 +96,8 @@ if [ "$1" == "start "]; then
 
    #Direwolf can also be started via systemd but we need to ensure it is actually running - tbd
    echo -e "Starting direwolf:  Logs in $LOG"
-   direwolf -c /etc/ax25/direwolf.conf -da -t0 2>&1 >> $DIREWOLFRUNLOG &
+   # APRS decoding disabled by default - if you want this decoing logged, remove the -qd option
+   direwolf -c /etc/ax25/direwolf.conf -da -qd -t0 2>&1 >> $DIREWOLFRUNLOG &
    CHKERR
 
    #check this exists as it's required for ax25netd socket support
