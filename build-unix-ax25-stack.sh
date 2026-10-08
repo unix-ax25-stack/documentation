@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 10/03/26 
+# 10/08/26 
 
 
 # Purpose: This script is to help users compile the new Alpha stage Linux unix-ax25-stack userland 
@@ -21,6 +21,7 @@
 
 #Errata
 #------
+# 10/08/26 - KI6ZHD - Change to build WAMPES last; Added missing 'make clean' step on one repo
 # 10/03/26 - KI6ZHD - added the documentation repo just to be complete
 # 10/02/26 - KI6ZHD - updated ax25netd path defaults; added early sudo check to cache credentials sooner
 # 09/27/26 - KI6ZHD - Add error checking; re-arranged some items; added more user variables
@@ -162,6 +163,8 @@ if [ -d documentation ]; then
    git clone https://github.com/unix-ax25-stack/documentation
 fi
 
+
+
 echo -e "\n-------------------------------------------------"
 echo -e "Check Build time dependencies: "
 echo -e   "-------------------------------------------------"
@@ -189,42 +192,13 @@ echo -e "\n-------------------------------------------------"
 echo -e "Compiling Stage:"
 echo -e "-------------------------------------------------"
 
-echo -e "\n\n-------------------------------------------------"
-echo -e "\nCompiling wampes:"
-echo -e "-------------------------------------------------"
-
-echo -e " "
-cd wampes
-
-# no debian/ dir is present so we cannot build and package the debian way
-#
-#checkinstall is broken as is targeted installation dir support
-#  as in make install DESTDIR=/tmp/my-pkg
-#
-#sudo checkinstall --pkgname wampes--pkgversion 20260920 --pkgrelease 1 --pkggroup \
-#                 hamradio --pkgsource https://github.com/unix-ax25-stack/wampes --maintainer \
-#                 dl9sau@darc.de --provides "packet radio stack" --requires libgdbm6t64,libncurses6 \
-#                 make install
-
-echo -e "\nLast resort 'make; make install' workaround"
-NUMCPUS=`lscpu | grep ^CPU\(s\): | awk '{print $2}'`
-echo -e "\nCompiling.."
-make -j$NUMCPUS
-CHKERR
-echo -e "\nInstalling.."
-sudo make install
-CHKERR
-
-#This doesn't exist yet
-#sudo make installconf
-
 
 echo -e "\n\n-------------------------------------------------"
 echo -e "Compiling libax25:"
 echo -e "-------------------------------------------------"
 
 echo -e " "
-cd ../libax25
+cd libax25
 CHKERR
 
 echo -e "\nAutoreconfig.."
@@ -357,6 +331,39 @@ CHKERR
 echo -e "\nMake installing conf files.."
 sudo make installconf
 CHKERR
+
+
+echo -e "\n\n-------------------------------------------------"
+echo -e "\nCompiling wampes:"
+echo -e "-------------------------------------------------"
+
+echo -e " "
+cd ../wampes
+
+# no debian/ dir is present so we cannot build and package the debian way
+#
+#checkinstall is broken as is targeted installation dir support
+#  as in make install DESTDIR=/tmp/my-pkg
+#
+#sudo checkinstall --pkgname wampes--pkgversion 20260920 --pkgrelease 1 --pkggroup \
+#                 hamradio --pkgsource https://github.com/unix-ax25-stack/wampes --maintainer \
+#                 dl9sau@darc.de --provides "packet radio stack" --requires libgdbm6t64,libncurses6 \
+#                 make install
+
+echo -e "\nLast resort 'make; make install' workaround"
+NUMCPUS=`lscpu | grep ^CPU\(s\): | awk '{print $2}'`
+echo -e "\nMake cleaning.."
+make clean
+CHKERR
+echo -e "\nCompiling.."
+make -j$NUMCPUS
+CHKERR
+echo -e "\nInstalling.."
+sudo make install
+CHKERR
+
+#This doesn't exist yet
+#sudo make installconf
 
 
 echo -e "\nScript complete.  You now need to configure the userland stack in various /etc/ax25/*.conf files"
