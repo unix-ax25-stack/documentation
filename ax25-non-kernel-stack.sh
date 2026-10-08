@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#10/04/26
+#10/08/26
 
 # Purpose:  This is a basic script to connect a native Linux application through the new ax25netd 
 #           Unix sockets to AGW software-TNC for AX.25 connections
@@ -11,7 +11,8 @@
 
 
 #Errata
-#10/04/25 - KI6ZHD - disable Direwolf APRS packet decoding by default
+#10/08/26 - KI6ZHD - added restoring audio device levels
+#10/04/26 - KI6ZHD - disable Direwolf APRS packet decoding by default
 #10/02/26 - KI6ZHD - Added ax25netd socket directory prep; added start/stop syntax
 #09/26/26 - KI6ZHD - initial version of the start up script
 
@@ -94,6 +95,10 @@ if [ "$1" == "start "]; then
    cd /etc/ax25
    CHKERR
 
+   #Restoring previous saved audio levels - you MUST have previously tuned and saved your levels
+   sudo alsactl restore
+   CHKERR
+
    #Direwolf can also be started via systemd but we need to ensure it is actually running - tbd
    echo -e "Starting direwolf:  Logs in $LOG"
    # APRS decoding disabled by default - if you want this decoing logged, remove the -qd option
@@ -124,6 +129,10 @@ if [ "$1" == "start "]; then
    #ax25netd -c /etc/ax25/agwpe.conf -f
    ax25netd -c /etc/ax25/ax25netd_agwpe.conf 2>&1 >> $AX25NETDLOG
    CHKERR
+
+   #End of startup section
+
+
   elif [ "$1" == "stop "]; then
    #Future WAMPES stop
 
@@ -132,6 +141,8 @@ if [ "$1" == "start "]; then
 
    echo -e "\nStopping Direwolf"
    killall direwolf
+
+   #End of shutdown section
 fi
 
 echo -e "\nScript complete\n"
