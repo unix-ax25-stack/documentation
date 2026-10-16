@@ -1361,9 +1361,41 @@ so muß der Leser nie einen ganzen Rahmen verwerfen.
 Nicht in diesem Lauf: mehrere Knoten zugleich (§8.12); auf einem TCP-Knoten
 gibt es keinen Monitor (die Ableitung liefert dann 0).
 
-**Noch offen.**  Der (C)-Spiegel im Shim (§§11.1, 11.6) und der UI-Mirror in
-`libax25/wampes.c` stehen noch, ebenso der zweite, unabhängige Schritt
-(§11.8, roh senden auf `sockets/ax25`).
+### 11.11 Der Spiegel ist weg (2026-10-16)
+
+**(C) und (F) zurückgenommen.**  Der Shim spiegelt nicht mehr.  Gefallen sind
+aus `libax25/wampes.c` die Synthese `connect → SABM`, `accept → UA`,
+`close → DISC`/`DM` (`WAMPES_CTL_*`, `wampes_mirror_*`, `wampes_link_path`)
+und der UI-Mirror in `wampes_sendto()`/`wampes_recvfrom()`, samt der Felder
+`path[]`, `npath` und `we_called` in `struct wampes_sock` (§11.7).  Was
+bleibt, ist der echte Weitergabeweg: `wampes_source_call()` (der Sendepfad)
+und der Accept-Zeilen-Pfad in `him`/`AX25_PATH`.  Die Sitzung selbst — der
+Deskriptor, den der Knoten übergibt — war nie Teil des Spiegels.
+
+**Der Loop speist mheardd nicht mehr.**  `d48a258` hatte in
+`ax25netd/mux.c` (`mux_mirror_raw_ctl()`, Zweig `AGWPE_CMD_RAW`) die
+Loop-Ausnahme `u != &ax25netd.loop` gestrichen, damit der über den Loop
+gespiegelte WAMPES-Verkehr in der Heard-Liste erscheint.  Mit (E) holt sich
+`mheardd` die Rahmen direkt vom Knotenmonitor (§11.10); die Ausnahme ist
+wieder da, und der Loop ist wieder, was er war: kein Funk.  Der Loop-Port
+selbst (`AGWPE_PORT_LOOP`, 8200) bleibt unberührt.
+
+**Belegt (Laufzeit, macOS).**  Ein Mock-Knoten (`wampesmock.py`) spricht die
+Dienst-Protokolle; `AXSOCK_BACKEND=wampes`, `WAMPES_SOCKET=<mock>`:
+
+* **`connect()`** — mit Handover-Deskriptor und ohne (dann wird die
+  Kontrollverbindung die Sitzung): die Verbindung steht, `getsockname()` /
+  `getpeername()` nennen Quell- und Zielruf, ein Byte kommt zurück, `close()`
+  kehrt zurück.
+* **`listen()` / `accept()`** — der Knoten schickt `wampes:a0 DL1ABC-1 >
+  DL9SAU-3` samt Deskriptor, `accept()` gibt den Ruf durch, die Sitzung
+  trägt.
+* Die (E)-2-Kette bleibt grün: `mon_e2e.py` (FAILURES: 0), `listen_e2e.py`
+  (PASS), `mheard_e2e.py` (`DB0BBB-1  wampes:a0`), `svc_regress.py`,
+  `mon_test{,2,3,4}.py`.
+
+**Noch offen.**  Der zweite, unabhängige Schritt (§11.8, roh senden auf
+`sockets/ax25`).
 
 ## 12 Callsign-Eingabe: nicht raten, sondern sterben (2026-10-15)
 
