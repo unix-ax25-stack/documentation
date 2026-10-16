@@ -1288,6 +1288,83 @@ unabhängiger Schritt nach `(E)`.
   die portablen Teile bleiben portabel, die `SO_PEERCRED`/`LOCAL_PEERPID`-
   Verzweigung aus §10 ist das Muster.
 
+### 11.10 Umsetzung (libax25) und Laufzeit-Beleg (2026-10-16)
+
+**Was gebaut wurde.**  Die Knoten-Seite (§§11.1–11.9) ist mit `b311251`
+committet.  Auf der libax25-Seite sind es drei Funktionen in
+`libax25/wampes.c` — `wampes_mon_open`, `wampes_mon_read`, `wampes_mon_close`
+—, deklariert im internen `wampes.h`, und in `axmon.c` die dritte Quelle:
+`axmon_open_mask()` öffnet sie als `AXMON_WAMPES` (jetzt `AXMON_MAX_FD` = 3),
+`axmon_read()` gibt einen `AXMON_FRAMED_WAMPES`-fd an `wampes_mon_read()`
+weiter, `axmon_source_name()` nennt sie „WAMPES monitor".  Die Quelle entsteht
+**neben** Kern und Shim, weil ein Knoten kein AGWPE spricht: so wie die
+Shim-Quelle auf einem Rechner ohne ax25netd nichts zu speisen hat, hat die
+WAMPES-Quelle auf einem Rechner ohne Knoten nichts zu lesen.
+
+**Der Record.**  `[4B Big-Endian Länge][Interface-Name][NUL][Frame]`, wie
+`remote_net.c` ihn schreibt.  Der Leser liest die Länge, dann den Namen bis
+zum NUL (begrenzt, damit ein Peer ohne NUL nicht ewig lesen läßt), dann den
+Frame.  Zurück kommt ein Frame in derselben Form wie von Kern und Shim: ein
+KISS-Datenbyte (`0x00`), dann der AX.25-Rahmen.  In `sa_data` steht
+`<knoten>:<interface>` — der Name, den `listen` anzeigt und den `mheardd`
+durch `ax25_config_get_name()` auflösen kann.
+
+**Welchen Knoten ein Port meint.**  Ein Name vor dem Doppelpunkt, der einen
+`wampes.conf`-Knoten nennt, öffnet diesen (`wampes_port_hook()`); die Adresse
+kommt über `wampes_address(port)`, damit `WAMPES_SOCKET` gewinnt.  Aus
+`<nodedir>/sockets/ax25` wird `<nodedir>/sockets/monitor` — das Geschwister;
+ein anderer Name (TCP, Mock-`node.sock`) hat keinen Monitor und liefert 0.
+Ohne Port (`NULL`/`""`) gilt `wampes_address(NULL)`: `WAMPES_SOCKET`, sonst
+der einkompilierte Ort.  Der Knotenname fürs `<node>:`-Präfix kommt aus
+`wampes.conf` über die Adresse, sonst `"wampes"`.
+
+**Die Richtung** kommt aus dem Protokoll, das der Aufrufer (in
+Netzwerk-Byte-Ordnung) übergibt, genau wie am Kern: `ETH_P_AX25` (0x0002) →
+`input`, `ETH_P_ALL` (0x0003) → zusätzlich `output`.  Die Maske erreicht den
+Knoten so wenig wie den Kern — sie wird debug-notiert, nicht übertragen.
+
+**Eine Grenze weniger, als der Leser faßt.**  Der Leser hält
+`AXMON_FRAME_MAX` (1500) Bytes Nutzlast und legt das KISS-Byte davor; der
+Knoten kappte den Frame bei `> AXMON_FRAME_MAX`, also bis 1500 — eine Nutzlast
+von 1501, eine zu viel.  Der Knoten kappt jetzt bei `>= AXMON_FRAME_MAX`, also
+**≤ 1499** (`remote_net.c`).  Ein so langer Rahmen ist kein AX.25-Rahmen, und
+so muß der Leser nie einen ganzen Rahmen verwerfen.
+
+**Belegt (Laufzeit, macOS).**  Ein echter Knoten (`rig.py`, Port `a0`),
+`WAMPES_SOCKET=<dir>/sockets/ax25`:
+
+* **`moncli`** — genau der Weg von `listen`/`mheardd` (`axmon_open()`,
+  `poll()`, `axmon_read()`): `axmon_open()` öffnet die WAMPES-Quelle
+  (`kind=2`, `framed=2`).  Ohne `all` (`ETH_P_AX25`) kommt, was **B an A**
+  sendet (`DB0BBB-1 -> DB0AAA-1`), und **nicht** A's eigenes Senden; mit
+  `all` (`ETH_P_ALL`) kommt A's eigenes Senden (`DB0AAA-1 -> DB0BBB-1`) dazu.
+  `sa_data` = `wampes:a0`, und `ax25_config_get_name("wampes:a0")` löst es auf
+  (axports-Eintrag `wampes:a0`; ein Userspace-Port hat `Device == Name`).
+  `-p wampes:a0` öffnet dieselbe Quelle.
+
+* **`listen -a`** unter einem pty:
+
+  ```
+  listen: raw monitor via libax25 (WAMPES monitor, framed)
+  wampes:a0: fm DB0AAA-1 to DB0BBB-1 ctl UI pid=F0(Text) len 11
+  0000  hallo-von-a
+  ```
+
+* **`mheardd -f -F`** (Port `NULL`, also `WAMPES_SOCKET`), danach der
+  `mheard`-Klient:
+
+  ```
+  Callsign   Port    Packets   Last Heard
+  DB0BBB-1   wampes:a0         1   2026-10-16 ...
+  ```
+
+Nicht in diesem Lauf: mehrere Knoten zugleich (§8.12); auf einem TCP-Knoten
+gibt es keinen Monitor (die Ableitung liefert dann 0).
+
+**Noch offen.**  Der (C)-Spiegel im Shim (§§11.1, 11.6) und der UI-Mirror in
+`libax25/wampes.c` stehen noch, ebenso der zweite, unabhängige Schritt
+(§11.8, roh senden auf `sockets/ax25`).
+
 ## 12 Callsign-Eingabe: nicht raten, sondern sterben (2026-10-15)
 
 **Der Befund.**  `ax25_aton_entry()` schreibt die sechs Rufzeichen-Bytes, wie
