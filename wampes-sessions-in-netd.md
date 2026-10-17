@@ -1397,7 +1397,8 @@ Dienst-Protokolle; `AXSOCK_BACKEND=wampes`, `WAMPES_SOCKET=<mock>`:
   `mon_test{,2,3,4}.py`.
 
 **Noch offen.**  Der zweite, unabhängige Schritt (§11.8, roh senden auf
-`sockets/ax25`).
+`sockets/ax25`).  Dazu eine Frage für die Liste: IP-Nutzlast über den
+AGWPE-Port, §11.15.
 
 ### 11.12 Der Monitor-Socket und sein Modus (2026-10-17)
 
@@ -1630,8 +1631,33 @@ haben Fallback-Defines) läßt er sich aber mit `-D__linux__` auf macOS als
 Übersetzungseinheit prüfen: `-Wall -Wextra` warnungsfrei.  Regression ohne
 Verhaltensänderung auf macOS: `listen_p_scope.py` **0 Fehler**,
 `listen_e2e.py` PASS, `mheard_e2e.py` PASS, `mon_e2e.py` **0 Fehler**,
-`session_test.sh` ok.  Der Laufzeit-Beleg auf db0fhn (`listen -a -p bpq0`,
-`-p bpq0` ohne `-a`) steht aus.
+`session_test.sh` ok.
+
+**Belegt (db0fhn, 2026-10-17).**  Der gemeldete Fall selbst: `listen -a -p
+bpq0` endet nicht mehr mit *„invalid port name"*, sondern zeigt den eigenen
+Beacon —
+
+    bpq0: fm TE1ST to IDENT ctl UI^ pid=F0(Text) len 4  test
+
+(das Interface trägt mit `axparms -setcall bpq0 te1st` das Rufzeichen des
+`axports`-Eintrags, so daß der Kernel-Zweig ihn bedient).  `listen -p bpq0`
+**ohne** `-a` (nur RX, `ETH_P_AX25`) sieht ihn nicht — richtig, denn ein
+selbst gesendeter Rahmen kommt nicht als Empfang zurück; ihn zu sehen ist
+`-a` (`ETH_P_ALL`, RX **und** TX).  Wird das Interface dagegen auf ein
+anderes Rufzeichen gesetzt (`axparms -setcall bpq0 te1st-1`), paßt es nicht
+mehr zu `axports` (`bpq0 TE1ST …`): der Port gilt als Userspace-Port, und
+`beacon -s bpq0` antwortet *„no backend serves the port 'bpq0'"*.  Das ist
+die Rufzeichen-Identifikation (§11.13) und keine neue Regression; für ein
+passendes Rufzeichen bleibt der Kernel-Zweig zuständig.
+
+### 11.15 Offene Frage: IP-Nutzlast über den AGWPE-Port (2026-10-17)
+
+**Für die Liste, nicht Teil dieser Note.**  Kernel-AX.25 kann IP-Nutzlast
+tragen (PID 0xCC); in einem WAMPES-Knoten wird IP dagegen dem `net`-Programm
+überlassen.  Offen ist, was gilt, wenn ein Anwender **über den AGWPE-Port IP
+nach außen sprechen** will — oder von außen über ihn **erreichbar** sein
+möchte: ob die Brücke das durchreichen soll, wie sie das Ziel findet, und wer
+die Adressen vergibt.  Bisher ist es nur notiert.
 
 ## 12 Callsign-Eingabe: nicht raten, sondern sterben (2026-10-15)
 
