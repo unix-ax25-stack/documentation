@@ -1530,6 +1530,109 @@ ohne `-p`, ob überhaupt eine Shim-Quelle da ist, und verlangt dann, daß
 `-p loop` genau diese öffnet: **Fix 0 Fehler, BUGGY 2 Fehler**.  `listen_e2e.py`
 PASS, `mheard_e2e.py` PASS, `mon_e2e.py` 0 Fehler, `session_test.sh` ok.
 
+### 11.14 Benannter Kernel-Port: der `SOCK_PACKET`-Bind war nie einer (2026-10-17)
+
+**Der Befund (db0fhn).**  Nach `modprobe bpqether`, `ifconfig bpq0 up` und
+`axparms -setcall bpq0 te1st` zeigt `listen -a` die `bpq0`-Rahmen
+(`bpq0: fm TE1ST to IDENT …`), aber `listen -a -p bpq0` endet mit
+*„listen: invalid port name - bpq0"* — obwohl `bpq0` in `/etc/ax25/axports`
+steht.  Auffällig: mit einem **nicht** passenden Rufzeichen (`axparms -setcall
+bpq0 te1st-1`, das den Eintrag zum Userspace-Port macht) „gelingt" der Aufruf
+(er geht dann in den Shim-Zweig), mit dem **passenden** `te1st` kommt `EINVAL`.
+
+**Die Ursache, erste Hälfte — der Bind.**  Der Kernel-Zweig von
+`axmon_open_mask()` band das Packet-Socket mit einem `struct sockaddr_ll`:
+
+```c
+int fd = real_socket(PF_PACKET, SOCK_PACKET, protocol);
+struct sockaddr_ll sll;
+sll.sll_family = AF_PACKET;
+sll.sll_ifindex = (int)if_nametoindex(dev);
+real_bind(fd, (struct sockaddr *)&sll, sizeof(sll));	/* 20 Byte */
+```
+
+Ein `SOCK_PACKET`-Socket wird vom Kernel aber nicht von `packet_bind()`,
+sondern von `packet_bind_spkt()` bedient — und das prüft als **erstes**
+
+```c
+if (addr_len != sizeof(struct sockaddr))	/* 16, nicht 20 */
+	return -EINVAL;
+```
+
+bevor es `sa_data` überhaupt als Gerätenamen ansieht.  Ein `struct
+sockaddr_ll` ist vier Byte länger als `struct sockaddr`; jeder Bind eines
+**benannten** Kernel-Ports scheiterte damit an `EINVAL` — *egal welches
+Gerät*.  (Der `sockaddr_ll`-Weg gehört zu `SOCK_RAW`, dem modernen
+`packet_bind()`.)
+
+**Warum das nie auffiel.**  `-p` **ohne** Kernel-Ports überspringt den Zweig
+ganz (`ax25_config_kernel_ports() > 0`), das war db0fhn bis `modprobe`.  `-a`
+**ohne** `-p` bindet gar nicht: ein ungebundenes Packet-Socket sieht alle
+Kernel-Ports und meldet sie unter ihrem Namen aus `sa_data` — der Weg, den
+`listen -a | grep bpq0` nimmt.  Und macOS hat keinen Kernel-AX.25-Stack, der
+Zweig wird dort nicht einmal kompiliert.  Nur der Fall „geladener Kernel-AX.25
+**und** `-p <Kernel-Port>`" führte hinein, und den gab es vorher nicht.
+
+**Die Ursache, zweite Hälfte — die Meldung.**  `listen` liest `EINVAL` als
+*„invalid port name"*:
+
+```c
+if (axmon_open(htons(proto), port, &mon) < 0) {
+	if (errno == EINVAL)	/* „Name in keiner axports-Zeile" */
+		fprintf(stderr, "listen: invalid port name - %s\n", port);
+	else
+		perror("listen: cannot watch for AX.25 frames");
+```
+
+`EINVAL` ist in `axmon.h` für genau *diesen* Fall reserviert („a name in no
+axports entry").  Der Kernel-`EINVAL` des Binds schlüpfte in dieselbe Schublade
+und wurde als Tippfehler ausgegeben — eine falsche Antwort auf die richtige
+Frage.
+
+**Die Korrektur.**  `SOCK_PACKET` bleibt (siehe unten); gebunden wird es wie in
+`krnlif.c` (`USE_OBSOLETE_SOCK_PACKET`): ein `struct sockaddr` **genau seiner
+Länge** mit dem Gerätenamen in `sa_data` — dieselbe Hälfte, aus der der
+Lesepfad (`display_port(sa.sa_data)`) den Quellnamen jedes Rahmens nimmt:
+
+```c
+struct sockaddr sa;
+size_t n = strlen(dev);
+if (n > sizeof(sa.sa_data) - 1)
+	n = sizeof(sa.sa_data) - 1;
+memset(&sa, 0, sizeof(sa));
+sa.sa_family = AF_PACKET;
+memcpy(sa.sa_data, dev, n);
+if (real_bind(fd, &sa, sizeof(sa)) < 0) { … }
+```
+
+`if_nametoindex()` entfällt: das `bind()` selbst ist die Existenzprüfung
+(`packet_bind_spkt()` → `dev_get_by_name()`).  Und damit der reservierte
+`EINVAL` auch künftig nur eines bedeutet, wird ein Kernel-`EINVAL` aus dem Bind
+nicht durchgereicht:
+
+```c
+errno = (save == 0 || save == EINVAL) ? ENODEV : save;
+```
+
+Kein `listen.c`-Eingriff nötig; der Vertrag des Headers gilt wieder.
+
+**Warum nicht `SOCK_RAW`/`sockaddr_ll`.**  `SOCK_RAW` füllt beim `recvfrom()`
+ein `sockaddr_ll`; in `sa_data` stünden dann Protokoll und `ifindex` statt des
+Gerätenamens, und `listen`s `display_port()` benennt die Quelle aus genau
+`sa_data`.  Der Name käme nie an.  `SOCK_PACKET` ist die eine API, die den
+Device-Namen in `sa_data` liefert — also bleibt sie, und der Bind mußte sich
+ihr anpassen, nicht umgekehrt.
+
+**Belegt (macOS).**  Der Linux-Zweig wird hier nie kompiliert; nach Entfernen
+der nun überflüssigen Linux-Header (`net/if.h` diente `if_nametoindex()`,
+`netpacket/packet.h` dem `sockaddr_ll`; `PF_/AF_PACKET` und `SOCK_PACKET`
+haben Fallback-Defines) läßt er sich aber mit `-D__linux__` auf macOS als
+Übersetzungseinheit prüfen: `-Wall -Wextra` warnungsfrei.  Regression ohne
+Verhaltensänderung auf macOS: `listen_p_scope.py` **0 Fehler**,
+`listen_e2e.py` PASS, `mheard_e2e.py` PASS, `mon_e2e.py` **0 Fehler**,
+`session_test.sh` ok.  Der Laufzeit-Beleg auf db0fhn (`listen -a -p bpq0`,
+`-p bpq0` ohne `-a`) steht aus.
+
 ## 12 Callsign-Eingabe: nicht raten, sondern sterben (2026-10-15)
 
 **Der Befund.**  `ax25_aton_entry()` schreibt die sechs Rufzeichen-Bytes, wie
