@@ -1453,6 +1453,83 @@ geworden, und „Setting it right" nennt 0700/0755 statt 0700/0750.
 `.sockets` 0700, `sockets/ax25` 0666, `sockets/monitor` neu) und
 `doc/LIBAX25-BRIDGE.md` (die 0660 im Dienst-Satz) sind nachgezogen.
 
+### 11.13 Port-Scoping: `-p <Name>` fragte den Kernel, obwohl der Port kein Kernel-Port war (2026-10-17)
+
+**Der Befund (db0fhn).**  `listen -a -p loop` und `listen -a -p radio0`
+endeten mit *„cannot watch for AX.25 frames: No such device or address"*
+(ENXIO), für **jeden** Namen im `axports`.  Ohne `-p` lief alles.
+
+**Die Ursache.**  Die Port-Aufteilung in `axmon_open_mask()` entscheidet pro
+Name, welche der drei Quellen den Port bedient (`kernel_owner`,
+`wampes_owner`, `shim_owner`, §11.10).  Für den Kernel stand dort
+
+```c
+kernel_owner = named && ax25_config_get_dev((char *)port) != NULL;
+```
+
+und das ist **kein** Kernel-Test.  `ax25_config_get_dev()` liefert für jede
+`axports`-Zeile ein Device: `ax25_config_init_port()` setzt `dev = name` für
+genau den Eintrag, der kein Interface nennt (`axconfig.c`).  `get_dev()`
+beantwortet also „steht dieser Name in `axports`", nicht „ist das ein
+Kernel-Port" — und antwortete damit auf jedem Rechner mit **ja** für jeden
+Port, auch die Userspace-Ports.
+
+**Was daraus folgte.**  `kernel_owner` war immer wahr, und daran hängt mehr
+als der Kernel-Zweig: `shim_owner = named && !kernel_owner && …` wurde damit
+falsch, also fiel der **Shim**-Zweig aus.  Übrig blieben nur der
+Knoten-Zweig (läuft nur, wenn der Name einen konfigurierten Knoten nennt) und
+der Kernel-Zweig — und letzterer steht hinter `ax25_config_kernel_ports() > 0`.
+Auf db0fhn ist Kernel-AX.25 **nicht geladen** (das einzige Kernel-Interface wäre
+`bpq0`), also ist `kernel_ports` **0** und der Kernel-Zweig wird gar nicht
+betreten.  Damit lief **kein** Zweig, `nfd == 0`, und `axmon_open_mask()`
+antwortete mit `errno = ENXIO` — genau das gemeldete „No such device or
+address", für `loop` **und** `radio0`.  (Auf einem Wirt mit geladenem Kernel
+nähme `-p <Userspace-Name>` zusätzlich den Kernel-Zweig, fände kein Interface
+und gäbe **dort** schon fatal auf — dieselbe falsche Frage, zweite sichtbare
+Form.)  Auf macOS ist der Ausgang derselbe wie auf db0fhn (`kernel_ports` 0),
+deshalb ist der Fehler hier reproduzierbar — die e2e-Tests fanden ihn nicht,
+weil sie `wampes:…`-Namen benutzten, die der Knoten-Zweig ohnehin bedient.
+
+**Die Korrektur.**  Das Prädikat ist das, das `bind()` selbst benutzt:
+
+```c
+kernel_owner = named && ax25_config_port_is_kernel(port);
+```
+
+`ax25_config_port_is_kernel()` (`axconfig.h`:204) trägt das Urteil aus
+`ax25_config_init_port()`: Kernel nur dann, wenn das Rufzeichen zu einem
+*up*-Interface paßt.  `listen -p loop`, `-p radio0`, `-p wampes:…` treffen
+jetzt genau die eine Quelle, die den Port bedient, und deren Fehler ist fatal.
+
+**Das `?` in `listen -a` ist kein Fehler.**  `-a` **ohne** `-p` öffnet einen
+**ungebundenen** Monitor.  `axsock_raw_name()` (`agwpe_sock.c`) nennt einen
+Rahmen nur dann aus der Portnummer, wenn der Bind den Port kannte
+(`s->port_known`) oder es der loop-Port (255) ist — dessen Nummer ist eindeutig,
+weil das Protokoll sie ihm vorbehält.  Ohne das ist die Nummer eines anonymen
+Senders (0) nicht von „erster Port" zu unterscheiden, und eine `axports`-Zeile
+auf dieser Nummer wäre eine falsche Antwort.  Für einen ungebundenen Monitor
+bleibt deshalb jeder Nicht-loop-Rahmen namenlos — `listen` druckt `?` statt
+einen Namen zu erfinden.  Die Abhilfe ist `-p radio0`: der Bind setzt das
+Device in `s->bound`, und der Rahmen heißt dann `radio0:`.
+
+**Ein Name, zwei Bedeutungen (Hinweis).**  Der Knoten-Zweig beansprucht
+**jeden** Namen, dessen Teil vor dem Doppelpunkt ein konfigurierter Knoten ist
+(`wampes_port_hook()`, `wampes.c`:326).  Ein Knoten namens `radio0` nimmt damit
+auch den *einfachen* Port `radio0` mit — dieselbe Reihenfolge wie
+`wampes_bind()` (Kernel → Knoten → Shim).  Das ist Absicht, aber es heißt: wer
+in der `axports` einen Shim-Port `radio0` **und** einen Knoten `radio0` (etwa
+über `radio0:5`) führt, erreicht mit `-p radio0` den Knoten, nicht den Shim.
+Einer der beiden Namen muß weg.
+
+**Belegt (Laufzeit, macOS).**  `scoping_probe` gegen `HEAD:axmon.c` und gegen
+den Fix: vorher liefert `axmon_open_mask()` für **jeden** Namen ENXIO
+(`loop`, `radio0`, `wampes`, `wampes:a0`), nachher öffnet `loop`/`radio0` die
+Shim-Quelle und `wampes`/`wampes:a0` scheitern nur, solange kein Knoten läuft.
+`listen_p_scope.py` (neu) fängt die Vorbedingung selbst ab — es prüft erst
+ohne `-p`, ob überhaupt eine Shim-Quelle da ist, und verlangt dann, daß
+`-p loop` genau diese öffnet: **Fix 0 Fehler, BUGGY 2 Fehler**.  `listen_e2e.py`
+PASS, `mheard_e2e.py` PASS, `mon_e2e.py` 0 Fehler, `session_test.sh` ok.
+
 ## 12 Callsign-Eingabe: nicht raten, sondern sterben (2026-10-15)
 
 **Der Befund.**  `ax25_aton_entry()` schreibt die sechs Rufzeichen-Bytes, wie
