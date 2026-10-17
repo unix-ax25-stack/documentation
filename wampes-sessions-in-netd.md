@@ -1171,7 +1171,8 @@ nur, **wenn ein Konsument da ist** (§11.4): ohne Konsument kosten sie nichts.
 
 `Listeners[]` in `remote_net.c` hat zwei **echte** Einträge und einen
 Sentinel (`for (l = Listeners; l->name; l++)`): den Kommando-Kanal
-(`.sockets/netcmd`, 0700) und den Dienst-Socket (`sockets/ax25`).  Der Monitor
+(`.sockets/netcmd`, Socket 0600, Verzeichnis 0700) und den Dienst-Socket
+(`sockets/ax25`).  Der Monitor
 bekommt einen **dritten echten** Eintrag und damit einen vierten als Sentinel.
 
 Warum getrennt: der Dienst-Socket entscheidet, wer **verbinden** darf; der
@@ -1185,7 +1186,8 @@ deshalb zwei Tore und nicht eins.
   Kernel-Monitor ebenso mitgibt.  `libax25` setzt `<node>:` davor, so daß
   `listen` `wampes:hf` zeigt (ein Kernel-Monitor zeigt `hf`).
 * **uid/gid vom Socket werden nicht ausgewertet** — es gibt keine Filterung
-  nach Benutzer; das Tor ist die Datei.
+  nach Benutzer; das Tor ist die Datei, genauer der Modus des Sockets (0660
+  und die Gruppe von `sockets/`; §11.12).
 * **Der Monitor blockiert den Node nie**: ein Kanal, der nicht liest, verliert
   Frames — er staut sie nicht, und er wird auch nicht hinausgeworfen.  Die
   Regel aus `axlisten_ui_deliver()` („ein Monitor-Frame, der nicht geschrieben
@@ -1396,6 +1398,60 @@ Dienst-Protokolle; `AXSOCK_BACKEND=wampes`, `WAMPES_SOCKET=<mock>`:
 
 **Noch offen.**  Der zweite, unabhängige Schritt (§11.8, roh senden auf
 `sockets/ax25`).
+
+### 11.12 Der Monitor-Socket und sein Modus (2026-10-17)
+
+**Der Monitor hat eigene Rechte.**  Bis hierher teilte er sich die Vorgabe
+des Dienst-Sockets: `set_service_rights()` setzte auf **beide** 0666, weil
+das Verzeichnis `sockets/` (0750) das Tor sein sollte.  Der Monitor bekommt
+jetzt seine eigenen: **0660** als Vorgabe, und seine Gruppe ist die Gruppe
+von `sockets/`.
+
+**Warum 0660 und nicht 0666.**  Der Dienst-Socket entscheidet **CONNECT**,
+und `connect()` an einem Unix-Socket fragt nach *write* — „weit offen" ist
+dort 0666.  Der Monitor entscheidet **ZUSCHAUEN**, und zuschauen heißt, in
+jeden Rahmen des Knotens sehen zu dürfen.  Das Publikum dafür ist die
+Gruppe, und 0660 sagt das.  Dieselbe Regel wie in §11.3: nicht nach
+Benutzer filtern — das Tor ist die Datei.
+
+**Warum die Gruppe vererbt wird.**  BSD/macOS gibt einem neuen Socket die
+Gruppe seines **Verzeichnisses**, Linux die des **Prozesses** (nur mit
+setgid am Verzeichnis wäre es die des Verzeichnisses).  Auf einem Knoten,
+der als root läuft, wäre der Monitor auf Linux damit `root:root` 0660 —
+nur root dürfte zuschauen —, während auf macOS `root:staff` jeden lokalen
+Account zuließe.  Also *sagt* der Knoten es, statt es zu erben:
+`inherit_dir_group()` in `open_listener()` gibt dem Monitor die Gruppe von
+`sockets/`.  Damit meint `chgrp hams $TCPDIR/sockets` auf beiden Systemen
+dasselbe, und `axsock monitor group <name>` kann es aus der `net.rc`
+übersteuern.
+
+**Das Verzeichnis ist nicht mehr das Tor.**  `sockets/` kommt jetzt **0755**
+hoch; `.sockets` bleibt bei **0700** (`create_rundir()`/`create_admin_rundir()`
+in `lib/rundir.c`, `nodedir_setup()` in `src/main.c`, `_secure` im Makefile —
+die vier Stellen, die den Modus festlegen, sind gleichgezogen: `sockets/` 0755,
+`.sockets` 0700).  Die 0750
+auf `sockets/` hatte nichts entschieden: auf BSD wurde sie `root:staff`
+und ließ jeden zu, auf Linux `root:root` und ließ niemanden zu — was den
+Sysop zu `chmod 755` trieb.  Was das Verzeichnis noch entscheidet, ist der
+Weg dorthin (`x`) und wer einen Socket anlegen darf (`bind()` braucht
+*write*) — beides nicht die Frage, wer senden darf.  Die steht auf dem
+Socket, und `axsock mode`/`group` sowie `axsock monitor mode`/`group`
+bewegen sie aus der `net.rc`.
+
+**Belegt (Laufzeit, macOS).**  Ein echter Knoten (`net -g -d <dir>`, ein
+Pty-Port, keine Rahmen), `axsock_mon_mode.py`: `sockets/` 0755, `.sockets`
+0700, `sockets/ax25` 0666, `sockets/monitor` 0660; ein vorab mit fremder
+Gruppe angelegtes `sockets/` vererbt sie an den Monitor; `axsock monitor
+mode 0640` und `axsock monitor group <name>` wirken; Unfug wird abgewiesen;
+das Listing zeigt beide Sockets.  FAILURES: 0.
+
+**Doku.**  `wampes.git/doc/PERMISSIONS.md` ist entsprechend umgeschrieben —
+der Abschnitt „The door is the directory" heißt jetzt „The socket is the
+door", die `chgrp`-Beispiele sind `axsock group`/`axsock monitor group`
+geworden, und „Setting it right" nennt 0700/0755 statt 0700/0750.
+`doc/INSTALL-PATHS.md` (Layout-Tabelle und „The two socket directories\":
+`.sockets` 0700, `sockets/ax25` 0666, `sockets/monitor` neu) und
+`doc/LIBAX25-BRIDGE.md` (die 0660 im Dienst-Satz) sind nachgezogen.
 
 ## 12 Callsign-Eingabe: nicht raten, sondern sterben (2026-10-15)
 
